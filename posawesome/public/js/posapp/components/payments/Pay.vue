@@ -60,7 +60,8 @@
                   dense
                   outlined
                   hide-details
-                  clearable
+                  readonly
+                  disabled
                   
                   background-color="white"
                   v-model="pos_profile_search"
@@ -180,6 +181,8 @@
                   outlined
                   hide-details
                   clearable
+                  readonly
+                  disabled
                   background-color="white"
                   v-model="selected_pos_profile"
                   :items="pos_profiles_list"
@@ -214,6 +217,7 @@
                   hide-details
                   v-model="mpesa_search_mobile"
                   clearable
+
                 ></v-text-field>
               </v-col>
               <v-col> </v-col>

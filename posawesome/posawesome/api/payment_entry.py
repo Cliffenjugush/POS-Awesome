@@ -346,9 +346,8 @@ def process_pos_payment(payload):
 
                         is_match = False
                         if hashed_customer_mobile and mpesa_mobile and hashed_customer_mobile == mpesa_mobile:
-                            is_match = True
-                        elif customer_first_name and mpesa_full_name and customer_first_name == mpesa_full_name:
-                            is_match = True
+                            if customer_first_name and mpesa_full_name and customer_first_name == mpesa_full_name:
+                                is_match = True
 
                         if is_match:
                             new_mpesa_payment = submit_mpesa_payment(
@@ -519,40 +518,36 @@ def process_pos_payment(payload):
     #     all_results_msg += "<h4>Reconciled M-PESA Payments</h4><p>No M-PESA payments reconciled</p>"
 
     # Unreconciled Invoices Table
-    all_unreconciled_invoices = {}
-    for result in results:
-        for invoice in result.get("Updated Invoices", []):
-            invoice_id = invoice.get("name")
-            if invoice_id not in all_unreconciled_invoices:
-                all_unreconciled_invoices[invoice_id] = flt(invoice.get("outstanding_amount"))
-    if all_unreconciled_invoices:
-        all_results_msg += "<h4>Unreconciled Invoices</h4>"
-        all_results_msg += "<table class='table table-bordered'><thead><tr><th>Invoice</th><th>Outstanding Amount</th></tr></thead><tbody>"
-        for invoice_id, outstanding in all_unreconciled_invoices.items():
-            if outstanding > 0:
-                all_results_msg += f"<tr><td>{invoice_id}</td><td>{outstanding}</td></tr>"
-        all_results_msg += "</tbody></table>"
-    # else:
-    #     all_results_msg += "<h4>Unreconciled Invoices</h4><p>All invoices reconciled</p>"
+    # if len(data.selected_invoices) > 0 and data.total_selected_invoices > 0:
+    #     msg += "<h4>Reconciled Invoices</h4>"
+    #     msg += "<table class='table table-bordered'>"
+    #     msg += "<thead><tr><th>Invoice</th><th>Amount</th></tr></thead>"
+    #     msg += "<tbody>"
+    #     for invoice in data.selected_invoices:
+    #         msg += "<tr><td>{0}</td><td>{1}</td></tr>".format(
+    #             invoice.get("name"), invoice.get("outstanding_amount")
+    #         )
+    #     msg += "</tbody>"
+    #     msg += "</table>"
 
     # Unreconciled M-PESA Payments Table
-    # unreconciled_mpesa_dict = {}
-    # for result in results:
-    #     for mpesa in result.get("selected_mpesa_payments", []):
-    #         mpesa_id = mpesa.get("name")
-    #         if not any(p.get("mpesa_reference") == mpesa_id for p in result.get("new_payments_entry", [])):
-    #             if mpesa_id in unreconciled_mpesa_dict:
-    #                 unreconciled_mpesa_dict[mpesa_id] += flt(mpesa.get("amount", 0))
-    #             else:
-    #                 unreconciled_mpesa_dict[mpesa_id] = flt(mpesa.get("amount", 0))
-    # if unreconciled_mpesa_dict:
-    #     all_results_msg += "<h4>Reconciled M-PESA Payments</h4>"
-    #     all_results_msg += "<table class='table table-bordered'><thead><tr><th>Transaction ID</th><th>Total Amount</th></tr></thead><tbody>"
-    #     for mpesa_id, amount in unreconciled_mpesa_dict.items():
-    #         all_results_msg += f"<tr><td>{mpesa_id}</td><td>{amount}</td></tr>"
-    #     all_results_msg += "</tbody></table>"
-    # else:
-    #     all_results_msg += "<h4>Unreconciled M-PESA Payments</h4><p>All M-PESA payments processed</p>"
+    unreconciled_mpesa_dict = {}
+    for result in results:
+        for mpesa in result.get("selected_mpesa_payments", []):
+            mpesa_id = mpesa.get("name")
+            if not any(p.get("mpesa_reference") == mpesa_id for p in result.get("new_payments_entry", [])):
+                if mpesa_id in unreconciled_mpesa_dict:
+                    unreconciled_mpesa_dict[mpesa_id] += flt(mpesa.get("amount", 0))
+                else:
+                    unreconciled_mpesa_dict[mpesa_id] = flt(mpesa.get("amount", 0))
+    if unreconciled_mpesa_dict:
+        all_results_msg += "<h4>Reconciled M-PESA Payments</h4>"
+        all_results_msg += "<table class='table table-bordered'><thead><tr><th>Transaction ID</th><th>Total Amount</th></tr></thead><tbody>"
+        for mpesa_id, amount in unreconciled_mpesa_dict.items():
+            all_results_msg += f"<tr><td>{mpesa_id}</td><td>{amount}</td></tr>"
+        all_results_msg += "</tbody></table>"
+    else:
+        all_results_msg += "<h4>Unreconciled M-PESA Payments</h4><p>All M-PESA payments processed</p>"
 
     # Display the results
     frappe.msgprint(
