@@ -150,6 +150,25 @@
               </v-col>
             </v-row>
             <v-row align="center" no-gutters class="mb-1">
+              <v-col md="4" cols="12">
+                <v-select
+                  dense
+                  outlined
+                  hide-details
+                  clearable
+                  readonly
+                  disabled
+                  background-color="white"
+                  v-model="selected_pos_profile"
+                  :items="pos_profiles_list"
+                  item-value="name"
+                  item-text="name"
+                  label="Select POS Profile"
+                  @change="get_draft_mpesa_payments_register"
+                ></v-select>
+              </v-col>
+            </v-row>
+            <v-row align="center" no-gutters class="mb-1">
               <v-col md="4" cols="12" class="mr-1">
                 <v-text-field
                   dense
