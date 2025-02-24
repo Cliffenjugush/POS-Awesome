@@ -714,11 +714,22 @@ def redeeming_customer_credit(
                     invoice_doc.pos_profile
                 )
             )
+
+        # Get customer details
+        customer_doc = frappe.get_doc("Customer", invoice_doc.customer)
+        if not customer_doc:
+            frappe.throw(_(f"Customer {invoice_doc.customer} not found"))
+
         for row in data.get("customer_credit_dict"):
             if row["type"] == "Invoice" and row["credit_to_redeem"]:
                 outstanding_invoice = frappe.get_doc(
                     "Sales Invoice", row["credit_origin"]
                 )
+
+                # Update customer name in outstanding invoice if needed
+                if not outstanding_invoice.customer_name or outstanding_invoice.customer_name != customer_doc.customer_name:
+                    outstanding_invoice.customer_name = customer_doc.customer_name
+                    outstanding_invoice.save()
 
                 jv_doc = frappe.get_doc(
                     {
@@ -726,6 +737,7 @@ def redeeming_customer_credit(
                         "voucher_type": "Journal Entry",
                         "posting_date": today,
                         "company": invoice_doc.company,
+                        "user_remark": f"Credit redemption for {customer_doc.customer_name}"
                     }
                 )
 
@@ -733,6 +745,7 @@ def redeeming_customer_credit(
                     "account": outstanding_invoice.debit_to,
                     "party_type": "Customer",
                     "party": invoice_doc.customer,
+                    "party_name": customer_doc.customer_name,
                     "reference_type": "Sales Invoice",
                     "reference_name": outstanding_invoice.name,
                     "debit_in_account_currency": row["credit_to_redeem"],
@@ -743,6 +756,7 @@ def redeeming_customer_credit(
                     "account": invoice_doc.debit_to,
                     "party_type": "Customer",
                     "party": invoice_doc.customer,
+                    "party_name": customer_doc.customer_name,
                     "reference_type": "Sales Invoice",
                     "reference_name": invoice_doc.name,
                     "credit_in_account_currency": row["credit_to_redeem"],
@@ -759,6 +773,11 @@ def redeeming_customer_credit(
                 jv_doc.submit()
 
     if is_payment_entry and total_cash > 0:
+        # Get customer details for payment entries
+        customer_doc = frappe.get_doc("Customer", invoice_doc.customer)
+        if not customer_doc:
+            frappe.throw(_(f"Customer {invoice_doc.customer} not found"))
+
         for payment in payments:
             if not payment.amount:
                 continue
@@ -769,6 +788,8 @@ def redeeming_customer_credit(
                     "payment_type": "Receive",
                     "party_type": "Customer",
                     "party": invoice_doc.customer,
+                    "party_name": customer_doc.customer_name,
+                    "customer_name": customer_doc.customer_name,
                     "paid_amount": payment.amount,
                     "received_amount": payment.amount,
                     "paid_from": invoice_doc.debit_to,
@@ -777,6 +798,7 @@ def redeeming_customer_credit(
                     "mode_of_payment": payment.mode_of_payment,
                     "reference_no": invoice_doc.posa_pos_opening_shift,
                     "reference_date": today,
+                    "remarks": f"Payment received from {customer_doc.customer_name}"
                 }
             )
 

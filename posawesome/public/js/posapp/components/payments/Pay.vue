@@ -6,7 +6,31 @@
           class="main mx-auto grey lighten-5 mt-3 p-3 pb-16 overflow-y-auto"
           style="max-height: 94vh; height: 94vh"
         >
-          <Customer></Customer>
+          <!-- Customer Multi-Select -->
+          <v-select
+            v-model="selected_customers"
+            :items="customers_list"
+            item-text="customer_name"
+            item-value="name"
+            label="Select Customers"
+            multiple
+            outlined
+            dense
+            clearable
+            @change="onCustomerSelect"
+          >
+            <template v-slot:prepend-item>
+              <div class="px-2 pt-2">
+                <v-text-field
+                  v-model="customer_search"
+                  placeholder="Search customers..."
+                  hide-details
+                  clearable
+                  :disabled="hasSubmittedInvoices"
+                ></v-text-field>
+              </div>
+            </template>
+          </v-select>
           <v-divider></v-divider>
           <div>
             <v-row>
@@ -37,6 +61,7 @@
                   outlined
                   hide-details
                   clearable
+                  
                   background-color="white"
                   v-model="pos_profile_search"
                   :items="pos_profiles_list"
@@ -99,8 +124,7 @@
               <v-col md="5" cols="12">
                 <p v-if="total_selected_payments" class="golden--text text-end">
                   <span>{{ __("Total Selected :") }}</span>
-                  <span>
-                    {{ currencySymbol(pos_profile.currency) }}
+                  <span >{{ currencySymbol(pos_profile.currency) }}
                     {{ formtCurrency(total_selected_payments) }}
                   </span>
                 </p>
@@ -149,6 +173,24 @@
                 </p>
               </v-col>
             </v-row>
+            <v-row align="center" no-gutters class="mb-1">
+              <v-col md="4" cols="12">
+                <v-select
+                  dense
+                  outlined
+                  hide-details
+                  clearable
+                  background-color="white"
+                  v-model="selected_pos_profile"
+                  :items="pos_profiles_list"
+                  item-value="name"
+                  item-text="name"
+                  label="Select POS Profile"
+                  @change="get_draft_mpesa_payments_register"
+                ></v-select>
+              </v-col>
+            </v-row>
+
             <v-row align="center" no-gutters class="mb-1">
               <v-col md="4" cols="12" class="mr-1">
                 <v-text-field
@@ -215,7 +257,7 @@
             <h4 class="primary--text">Totals</h4>
             <v-row>
               <v-col md="7" class="mt-1">
-                <span>{{ __("Total Invoices:") }}</span>
+                <span>{{ __("Total Invoices                :") }}</span>
               </v-col>
               <v-col md="5">
                 <v-text-field
@@ -338,6 +380,7 @@
   </div>
 </template>
 
+
 <script>
 import { evntBus } from "../../bus";
 import format from "../../format";
@@ -351,7 +394,7 @@ export default {
       dialog: false,
       pos_profile: "",
       pos_opening_shift: "",
-      customer_name: "",
+      customer_name: "", // Will need to be removed @c
       customer_info: "",
       company: "",
       singleSelect: false,
@@ -368,8 +411,14 @@ export default {
       pos_profiles_list: [],
       pos_profile_search: "",
       payment_methods_list: [],
-      mpesa_searchname: "",
+      mpesa_search_name: "",
       mpesa_search_mobile: "",
+      selected_pos_profile: "",
+      selected_customers: [],
+      customers_list: [], // Added for customer multi-select
+      customer_search: '', // Added for customer search
+      hasSubmittedInvoices: false, // Track if invoices have been submitted
+      no_invoices_message: "", // New data property for error message
       invoices_headers: [
         {
           text: __("Invoice"),
@@ -451,7 +500,7 @@ export default {
           text: __("Payment ID"),
           align: "start",
           sortable: true,
-          value: "transid",
+          value: "name",
         },
         {
           text: __("Full Name"),
@@ -460,7 +509,7 @@ export default {
           value: "full_name",
         },
         {
-          text: __("Nobile Number"),
+          text: __("Mobile Number"),
           align: "start",
           sortable: true,
           value: "mobile_no",
@@ -487,6 +536,7 @@ export default {
   },
 
   methods: {
+    // Existing methods remain unchanged except for get_outstanding_invoices()
     check_opening_entry() {
       return frappe
         .call("posawesome.posawesome.api.posapp.check_opening_shift", {
@@ -495,13 +545,14 @@ export default {
         .then((r) => {
           if (r.message) {
             this.pos_profile = r.message.pos_profile;
+            this.selected_pos_profile = this.pos_profile.name; // Initialize with current POS
+            this.get_available_pos_profiles();
             this.pos_opening_shift = r.message.pos_opening_shift;
             this.company = r.message.company.name;
             evntBus.$emit("payments_register_pos_profile", r.message);
             evntBus.$emit("set_company", r.message.company);
             this.set_payment_methods();
             this.pos_profile_search = r.message.pos_profile.name;
-            this.pos_profiles_list.push(this.pos_profile_search);
             this.payment_methods_list = [];
             this.pos_profile.payments.forEach((element) => {
               this.payment_methods_list.push(element.mode_of_payment);
@@ -515,72 +566,208 @@ export default {
         });
     },
     get_available_pos_profiles() {
-      if (!this.pos_profile.posa_allow_mpesa_reconcile_payments) return;
-      return frappe
-        .call(
-          "posawesome.posawesome.api.payment_entry.get_available_pos_profiles",
-          {
-            company: this.company,
-            currency: this.pos_profile.currency,
-          }
-        )
-        .then((r) => {
-          if (r.message) {
-            this.pos_profiles_list = r.message;
-          }
-        });
+      frappe.call(
+        "posawesome.posawesome.api.payment_entry.get_available_pos_profiles",
+        {
+          company: this.company,
+          currency: this.pos_profile.currency
+        }
+      ).then((r) => {
+        this.pos_profiles_list = r.message;
+      });
+    },
+    onCustomerSelect() {
+      this.fetch_customer_details();
+      this.get_outstanding_invoices();
+      this.get_unallocated_payments();
+      this.get_draft_mpesa_payments_register();
     },
     create_opening_voucher() {
       this.dialog = true;
     },
     fetch_customer_details() {
       const vm = this;
-      if (this.customer_name) {
-        frappe.call({
-          method: "posawesome.posawesome.api.posapp.get_customer_info",
-          args: {
-            customer: vm.customer_name,
-          },
-          async: false,
-          callback: (r) => {
-            const message = r.message;
-            if (!r.exc) {
-              vm.customer_info = {
-                ...message,
-              };
-              vm.set_mpesa_search_params();
-              evntBus.$emit("set_customer_info_to_edit", vm.customer_info);
+      vm.customer_info = [];
+      vm.mpesa_search_name = '';
+      vm.mpesa_search_mobile = '';
+
+      if (vm.selected_customers.length > 0) {
+        const promises = vm.selected_customers.map(customer => 
+          frappe.call({
+            method: "posawesome.posawesome.api.posapp.get_customer_info",
+            args: { customer: customer },
+          })
+        );
+
+        Promise.all(promises).then(results => {
+          results.forEach(r => {
+            if (!r.exc && r.message) {
+              const info = r.message;
+              vm.customer_info.push(info);
+              
+              // Build search parameters
+              const firstName = info.customer_name.split(" ")[0];
+              vm.mpesa_search_name += vm.mpesa_search_name ? 
+                `, ${firstName}` : firstName;
+              
+              if (info.mobile_no) {
+                const masked = info.mobile_no.substring(0, 4) + " ***** " + 
+                  info.mobile_no.substring(9);
+                vm.mpesa_search_mobile += vm.mpesa_search_mobile ? 
+                  `, ${masked}` : masked;
+              }
             }
-          },
+          });
         });
       }
     },
     onInvoiceSelected(event) {
-      evntBus.$emit("set_customer", event.item.customer);
+      if (event.value) { // When an invoice is selected
+        const selectedInvoice = event.item;
+        const customer = selectedInvoice.customer;
+
+        // Ensure customer is selected if not already
+        if (!this.selected_customers.includes(customer)) {
+          this.selected_customers.push(customer);
+          this.fetch_customer_details();
+        }
+
+        // Update related data
+        this.get_unallocated_payments();
+        this.get_draft_mpesa_payments_register();
+      } else { // When an invoice is deselected
+        const deselectedInvoice = event.item;
+        const customer = deselectedInvoice.customer;
+
+        // Check if this is the last invoice for the customer
+        const remainingInvoices = this.selected_invoices.filter(
+          invoice => invoice.customer === customer
+        );
+        if (remainingInvoices.length === 0) {
+          // Remove customer from selected_customers if no invoices remain
+          this.selected_customers = this.selected_customers.filter(
+            c => c !== customer
+          );
+          this.fetch_customer_details(); // Update search parameters
+        }
+
+        // Clear related selections if customer is deselected
+        if (!this.selected_customers.includes(customer)) {
+          this.selected_payments = this.selected_payments.filter(
+            pay => pay.party !== customer && pay.customer !== customer
+          );
+          this.selected_mpesa_payments = this.selected_mpesa_payments.filter(
+            mpesa => {
+              const customerInfo = this.customers_list.find(c => c.name === customer);
+              return !(
+                mpesa.full_name?.includes(customerInfo?.customer_name.split(' ')[0]) ||
+                mpesa.mobile_no === customerInfo?.mobile_no
+              );
+            }
+          );
+        }
+
+        // Update related data
+        this.get_unallocated_payments();
+        this.get_draft_mpesa_payments_register();
+      }
+
+      // Recalculate totals
+      this.updateTotals();
     },
+
+    onSelectAll(items) {
+      if (items.value) { // When "Select All" is checked
+        const selectedCustomers = [...new Set(
+          this.outstanding_invoices.map(invoice => invoice.customer)
+        )];
+        
+        this.selected_customers = selectedCustomers;
+        this.selected_invoices = [...this.outstanding_invoices]; // Select all invoices
+        
+        this.fetch_customer_details();
+        this.get_unallocated_payments();
+        this.get_draft_mpesa_payments_register();
+      } else { // When "Select All" is unchecked
+        this.selected_invoices = [];
+        this.selected_customers = [];
+        this.selected_payments = [];
+        this.selected_mpesa_payments = [];
+        this.fetch_customer_details();
+        this.get_unallocated_payments();
+        this.get_draft_mpesa_payments_register();
+      }
+
+      // Recalculate totals
+      this.updateTotals();
+    },
+
+    updateTotals() {
+      // Recalculate all totals after selection changes
+      this.$forceUpdate(); // Ensure computed properties are updated
+    },
+
     get_outstanding_invoices() {
       this.invoices_loading = true;
-      return frappe
-        .call(
-          "posawesome.posawesome.api.payment_entry.get_outstanding_invoices",
-          {
-            customer: this.customer_name,
-            company: this.company,
-            currency: this.pos_profile.currency,
-            pos_profile_name: this.pos_profile_search,
-          }
-        )
-        .then((r) => {
-          if (r.message) {
+      this.no_invoices_message = ""; // Reset message
+      const previouslySelected = [...this.selected_invoices];
+      
+      frappe.call({
+        method: "posawesome.posawesome.api.payment_entry.get_outstanding_invoices",
+        args: {
+          company: this.company,
+          currency: this.pos_profile.currency,
+          customers: this.selected_customers,
+          pos_profile_name: this.pos_profile_search
+        },
+        callback: (r) => {
+          if (r.message && r.message.length > 0) {
             this.outstanding_invoices = r.message;
-            this.invoices_loading = false;
+            
+            // Restore previously selected invoices that are still in the list
+            if (previouslySelected.length > 0) {
+              this.selected_invoices = this.outstanding_invoices.filter(invoice =>
+                previouslySelected.some(selected => selected.name === invoice.name)
+              );
+            }
+          } else {
+            this.outstanding_invoices = [];
+            this.no_invoices_message = __("No records found in the Invoices table");
+            this.selected_invoices = []; // Clear selections if no invoices
           }
-        });
+          
+          this.invoices_loading = false;
+          
+          // Update customer selections based on selected invoices
+          const uniqueCustomers = [...new Set(this.selected_invoices.map(invoice => invoice.customer))];
+          this.selected_customers = uniqueCustomers;
+          this.fetch_customer_details();
+          this.updateTotals();
+        },
+        error: (err) => {
+          this.outstanding_invoices = [];
+          this.no_invoices_message = __("Error fetching invoices: ") + (err.message || "Unknown error");
+          this.invoices_loading = false;
+          this.selected_invoices = []; // Clear selections on error
+        }
+      });
     },
+
+    fetch_customers() {
+      frappe.call({
+        method: "posawesome.posawesome.api.payment_entry.get_customers",
+        callback: (r) => {
+          if (r.message) {
+            this.customers_list = r.message;
+          }
+        }
+      });
+    },
+
     get_unallocated_payments() {
       if (!this.pos_profile.posa_allow_reconcile_payments) return;
       this.unallocated_payments_loading = true;
-      if (!this.customer_name) {
+      if (!this.selected_customers.length) {
         this.unallocated_payments = [];
         this.unallocated_payments_loading = false;
         return;
@@ -589,7 +776,7 @@ export default {
         .call(
           "posawesome.posawesome.api.payment_entry.get_unallocated_payments",
           {
-            customer: this.customer_name,
+            customers: JSON.stringify(this.selected_customers),
             company: this.company,
             currency: this.pos_profile.currency,
           }
@@ -601,38 +788,120 @@ export default {
           }
         });
     },
+
     set_mpesa_search_params() {
       if (!this.pos_profile.posa_allow_mpesa_reconcile_payments) return;
-      if (!this.customer_name) return;
-      this.mpesa_search_name = this.customer_info.customer_name.split(" ")[0];
-      if (this.customer_info.mobile_no) {
-        this.mpesa_search_mobile =
-          this.customer_info.mobile_no.substring(0, 4) +
-          " ***** " +
-          this.customer_info.mobile_no.substring(9);
-      }
+      if (!this.selected_customers.length) return;
+      this.mpesa_search_name = '';
+      this.mpesa_search_mobile = '';
+
+      this.selected_customers.forEach(customer => {
+        const customerInfo = this.customers_list.find(c => c.name === customer);
+        if (customerInfo) {
+          const firstName = customerInfo.customer_name.split(" ")[0];
+          this.mpesa_search_name += this.mpesa_search_name ? `, ${firstName}` : firstName;
+
+          if (customerInfo.mobile_no) {
+            const masked = customerInfo.mobile_no.substring(0, 4) + " ***** " + customerInfo.mobile_no.substring(9);
+            this.mpesa_search_mobile += this.mpesa_search_mobile ? `, ${masked}` : masked;
+          }
+        }
+      });
     },
+
     get_draft_mpesa_payments_register() {
       if (!this.pos_profile.posa_allow_mpesa_reconcile_payments) return;
       const vm = this;
       this.mpesa_payments_loading = true;
-      return frappe
-        .call("posawesome.posawesome.api.m_pesa.get_mpesa_draft_payments", {
-          company: vm.company,
-          mode_of_payment: null,
-          full_name: vm.mpesa_search_name || null,
-          mobile_no: vm.mpesa_search_mobile || null,
-          payment_methods_list: vm.payment_methods_list,
+
+      // Create an array to store all promises
+      const searchPromises = [];
+
+      // If we have search terms, split them and search for each
+      if (vm.mpesa_search_name) {
+        const names = vm.mpesa_search_name.split(',').map(name => name.trim());
+        names.forEach(name => {
+          searchPromises.push(
+            frappe.call({
+              method: "posawesome.posawesome.api.m_pesa.get_mpesa_draft_payments",
+              args: {
+                company: vm.company,
+                mode_of_payment: null,
+                full_name: name,
+                mobile_no: null,
+                payment_methods_list: vm.payment_methods_list,
+                pos_profile_name: vm.selected_pos_profile
+              }
+            })
+          );
+        });
+      }
+
+      // If we have mobile numbers, split them and search for each
+      if (vm.mpesa_search_mobile) {
+        const mobiles = vm.mpesa_search_mobile.split(',').map(mobile => mobile.trim());
+        mobiles.forEach(mobile => {
+          searchPromises.push(
+            frappe.call({
+              method: "posawesome.posawesome.api.m_pesa.get_mpesa_draft_payments",
+              args: {
+                company: vm.company,
+                mode_of_payment: null,
+                full_name: null,
+                mobile_no: mobile,
+                payment_methods_list: vm.payment_methods_list,
+                pos_profile_name: vm.selected_pos_profile
+              }
+            })
+          );
+        });
+      }
+
+      // If no search terms, do a single search
+      if (searchPromises.length === 0) {
+        searchPromises.push(
+          frappe.call({
+            method: "posawesome.posawesome.api.m_pesa.get_mpesa_draft_payments",
+            args: {
+              company: vm.company,
+              mode_of_payment: null,
+              full_name: null,
+              mobile_no: null,
+              payment_methods_list: vm.payment_methods_list,
+              pos_profile_name: vm.selected_pos_profile
+            }
+          })
+        );
+      }
+
+      // Execute all searches and combine results
+      return Promise.all(searchPromises)
+        .then(results => {
+          // Combine all results and remove duplicates
+          const allPayments = [];
+          const seenPayments = new Set();
+
+          results.forEach(r => {
+            if (r.message) {
+              r.message.forEach(payment => {
+                if (!seenPayments.has(payment.name)) {
+                  seenPayments.add(payment.name);
+                  allPayments.push(payment);
+                }
+              });
+            }
+          });
+
+          vm.mpesa_payments = allPayments;
+          vm.mpesa_payments_loading = false;
         })
-        .then((r) => {
-          if (r.message) {
-            vm.mpesa_payments = r.message;
-          } else {
-            vm.mpesa_payments = [];
-          }
+        .catch(error => {
+          console.error('Error fetching MPESA payments:', error);
+          vm.mpesa_payments = [];
           vm.mpesa_payments_loading = false;
         });
     },
+
     set_payment_methods() {
       // get payment methods from pos profile
       if (!this.pos_profile.posa_allow_make_new_payments) return;
@@ -645,8 +914,9 @@ export default {
         });
       });
     },
+
     clear_all(with_customer_info = true) {
-      this.customer_name = "";
+      this.selected_customers = [];
       if (with_customer_info) {
         this.customer_info = "";
       }
@@ -661,11 +931,13 @@ export default {
       this.selected_mpesa_payments = [];
       this.set_payment_methods();
     },
+
     submit() {
-      const customer = this.customer_name;
       const vm = this;
-      if (!customer) {
-        frappe.throw(__("Please select a customer"));
+
+      // Validation logic (unchanged)
+      if (!this.selected_customers || this.selected_customers.length === 0) {
+        frappe.throw(__("Please select at least one customer"));
         return;
       }
       if (
@@ -673,13 +945,10 @@ export default {
         this.total_selected_mpesa_payments == 0 &&
         this.total_payment_methods == 0
       ) {
-        frappe.throw(__("Please make a payment or select an payment"));
+        frappe.throw(__("Please make a payment or select a payment"));
         return;
       }
-      if (
-        this.total_selected_payments > 0 &&
-        this.selected_invoices.length == 0
-      ) {
+      if (this.total_selected_payments > 0 && this.selected_invoices.length == 0) {
         frappe.throw(__("Please select an invoice"));
         return;
       }
@@ -688,40 +957,88 @@ export default {
         payment.amount = flt(payment.amount);
       });
 
-      const payload = {};
-      payload.customer = customer;
-      payload.company = this.company;
-      payload.currency = this.pos_profile.currency;
-      payload.pos_opening_shift_name = this.pos_opening_shift.name;
-      payload.pos_profile_name = this.pos_profile.name;
-      payload.pos_profile = this.pos_profile;
-      payload.payment_methods = this.payment_methods;
-      payload.selected_invoices = this.selected_invoices;
-      payload.selected_payments = this.selected_payments;
-      payload.total_selected_invoices = flt(this.total_selected_invoices);
-      payload.selected_mpesa_payments = this.selected_mpesa_payments;
-      payload.total_selected_payments = flt(this.total_selected_payments);
-      payload.total_payment_methods = flt(this.total_payment_methods);
-      payload.total_selected_mpesa_payments = flt(
-        this.total_selected_mpesa_payments
-      );
+      // Invoice and Payment Payload (combined for now, without filtering M-Pesa by customer)
+      const payload = {
+        company: this.company,
+        currency: this.pos_profile.currency,
+        pos_opening_shift_name: this.pos_opening_shift.name,
+        pos_profile_name: this.pos_profile.name,
+        pos_profile: this.pos_profile,
+        customers: this.selected_customers.map((customerName) => {
+          const customerInfo = this.customers_list.find(c => c.name === customerName);
+          return {
+            customer: customerName,
+            mobile_no: customerInfo?.mobile_no || '', // Include mobile number for matching
+            customer_name: customerInfo?.customer_name || '', // Full name for reference
+            selected_invoices: this.selected_invoices.filter(inv => inv.customer === customerName),
+            selected_payments: this.selected_payments.filter(pay => pay.party === customerName || pay.customer === customerName),
+            payment_methods: this.payment_methods.map(method => ({
+              mode_of_payment: method.mode_of_payment,
+              amount: method.amount / this.selected_customers.length
+            })),
+            selected_mpesa_payments: this.selected_mpesa_payments.map(mpesa => ({
+              name: mpesa.name, // Only transaction ID
+              full_name: mpesa.full_name, // Only transaction ID
+              mobile_no: mpesa.mobile_no, // Hashed mobile number
+              amount: mpesa.amount,
+              currency: mpesa.currency,
+              posting_date: mpesa.posting_date
+            })) // Send all selected M-Pesa payments without filtering
+          };
+        })
+      };
 
+      // Log payload for debugging
+      console.log('Combined Payload:', payload);
+
+      // Send payload to backend
       frappe.call({
         method: "posawesome.posawesome.api.payment_entry.process_pos_payment",
-        args: { payload },
+        args: { payload: JSON.stringify(payload) },
         freeze: true,
-        freeze_message: __("Processing Payment"),
-        callback: function (r) {
-          if (r.message) {
+        freeze_message: __("Processing Payments and Invoices"),
+        callback: (r) => {
+          if (r.message && r.message.results) {
             frappe.utils.play_sound("submit");
+            const results = r.message.results;
+            const errors = results.flatMap(result => result.errors || []);
+
+            if (errors.length > 0) {
+              frappe.msgprint({
+                title: __('Payment Processing Results'),
+                message: errors.join('\n'),
+                indicator: 'orange'
+              });
+            } else {
+              const successMessage = results.map(result => {
+                const reconcileDoc = result.reconcile_doc ? `\nReconciliation Document: ${result.reconcile_doc}` : '';
+                const newPayments = result.new_payments_entry?.length ? 
+                  `\nNew Payments Created: ${result.new_payments_entry.map(p => p.name).join(', ')}` : '';
+                return `Customer ${result.customer}:${reconcileDoc}${newPayments}`;
+              }).join('\n\n');
+
+              frappe.msgprint({
+                title: __('Payments Processed Successfully'),
+                message: successMessage,
+                indicator: 'green'
+              });
+            }
+
+            // Refresh UI
             vm.clear_all(false);
-            vm.customer_name = customer;
             vm.get_outstanding_invoices();
             vm.get_unallocated_payments();
             vm.set_mpesa_search_params();
             vm.get_draft_mpesa_payments_register();
+            vm.hasSubmittedInvoices = true; // Mark invoices as submitted
+          } else if (r.exc) {
+            frappe.msgprint({
+              title: __('Error Processing Payments'),
+              message: r.exc || "An unexpected error occurred.",
+              indicator: 'red'
+            });
           }
-        },
+        }
       });
     },
   },
@@ -776,6 +1093,7 @@ export default {
   mounted: function () {
     this.$nextTick(function () {
       this.check_opening_entry();
+      this.fetch_customers(); // Fetch initial customer list
       evntBus.$on("update_customer", (customer_name) => {
         this.clear_all(true);
         this.customer_name = customer_name;
@@ -789,12 +1107,31 @@ export default {
       });
     });
   },
+
   beforeDestroy() {
     evntBus.$off("update_customer");
     evntBus.$off("fetch_customer_details");
   },
 };
 </script>
+
+<style>
+input[total_of_diff] {
+  text-align: right;
+}
+input[payments_methods] {
+  text-align: right;
+}
+input[total_selected_payments] {
+  text-align: right;
+}
+input[total_selected_invoices] {
+  text-align: right;
+}
+input[total_selected_mpesa_payments] {
+  text-align: right;
+}
+</style>
 
 <style>
 input[total_of_diff] {
