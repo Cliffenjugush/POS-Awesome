@@ -37,6 +37,8 @@
                   outlined
                   hide-details
                   clearable
+                  readonly
+                  clearable
                   background-color="white"
                   v-model="pos_profile_search"
                   :items="pos_profiles_list"
